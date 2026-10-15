@@ -1,0 +1,37 @@
+{
+  "timestamp": 1791290635801,
+  "state": "open",
+  "stats": {
+    "high": 0.0325,
+    "low": 0.027,
+    "price_change": 12.069,
+    "volume": 364.7,
+    "volume_usd": 891668.12
+  },
+  "greeks": {
+    "delta": 0.49414,
+    "gamma": 5e-05,
+    "vega": 88.18143,
+    "theta": -62.67715,
+    "rho": 26.08323
+  },
+  "index_price": 86224.18,
+  "instrument_name": "BTC-30OCT26-87000-C",
+  "last_price": 0.0325,
+  "settlement_price": 0.02815362,
+  "min_price": 0.0105,
+  "max_price": 0.0655,
+  "open_interest": 685.4,
+  "mark_price": 0.0321,
+  "interest_rate": 0.0,
+  "estimated_delivery_price": 86224.18,
+  "best_ask_price": 0.0325,
+  "best_bid_price": 0.0315,
+  "mark_iv": 33.84,
+  "bid_iv": 33.25,
+  "ask_iv": 34.23,
+  "underlying_price": 86565.84,
+  "underlying_index": "BTC-30OCT26",
+  "best_ask_amount": 52.2,
+  "best_bid_amount": 35.8
+}

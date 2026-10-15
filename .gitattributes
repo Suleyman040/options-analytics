@@ -1,0 +1,4 @@
+# Keep Unix line endings in the repo, even when edited on Windows,
+# so SQL, YAML and the Dockerfile behave the same inside Linux containers.
+* text=auto eol=lf
+*.png binary

@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Options Analytics</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
+    --muted: #8b949e; --accent: #58a6ff; --accent2: #f0883e; --good: #3fb950; --bad: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 24px; align-items: baseline;
+           padding: 16px 24px; border-bottom: 1px solid var(--border); }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .stat { color: var(--muted); }
+  .stat b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--good); } .dot.bad { background: var(--bad); }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(520px, 1fr)); gap: 16px; padding: 16px 24px; }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; min-width: 0; }
+  section h2 { font-size: 14px; margin: 0 0 8px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  section h2 small { color: var(--muted); font-weight: 400; }
+  .chart { height: 320px; }
+  select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+  th, td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  th { color: var(--muted); font-weight: 500; }
+  .buy { color: var(--good); } .sell { color: var(--bad); }
+  .scroll { max-height: 320px; overflow: auto; }
+  .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+  @media (max-width: 600px) { main { grid-template-columns: 1fr; padding: 12px; } header { padding: 12px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Options Analytics</h1>
+  <span class="stat"><span id="health" class="dot"></span> <span id="health-text">checking…</span></span>
+  <span class="stat">ticks/s <b id="tps">–</b></span>
+  <span class="stat">exchange→ingest p50/p99 <b id="lat1">–</b></span>
+  <span class="stat">ingest→stored p50/p99 <b id="lat2">–</b></span>
+  <span class="stat">updated <b id="updated">–</b></span>
+</header>
+<main>
+  <section>
+    <h2>Volatility smile <select id="expiry"></select></h2>
+    <div id="smile" class="chart"></div>
+  </section>
+  <section>
+    <h2>Term structure <small>ATM implied vol by expiry</small></h2>
+    <div id="term" class="chart"></div>
+  </section>
+  <section>
+    <h2>Realised vs implied <small>60-minute realised vol of the index vs ATM IV</small></h2>
+    <div id="rvi" class="chart"></div>
+  </section>
+  <section>
+    <h2>Recent trades <small>matched to the prior quote (ASOF JOIN)</small></h2>
+    <div class="scroll"><table id="trades"></table></div>
+  </section>
+  <section>
+    <h2>Taker flow <small>last 60 minutes, net delta in BTC</small></h2>
+    <div class="scroll"><table id="flow"></table></div>
+  </section>
+  <section>
+    <h2>Model check <small>our Black-76 vs Deribit, last 5 minutes</small></h2>
+    <div class="scroll"><table id="model"></table></div>
+  </section>
+</main>
+<script>
+const css = getComputedStyle(document.documentElement);
+const color = name => css.getPropertyValue(name).trim();
+const layout = (extra = {}) => ({
+  paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+  font: { color: color("--text"), size: 12 }, margin: { l: 50, r: 16, t: 8, b: 40 },
+  xaxis: { gridcolor: color("--border"), zeroline: false, ...(extra.xaxis || {}) },
+  yaxis: { gridcolor: color("--border"), zeroline: false, ticksuffix: "%", ...(extra.yaxis || {}) },
+  legend: { orientation: "h", y: 1.12 }, shapes: extra.shapes || [],
+});
+const config = { displayModeBar: false, responsive: true };
+const pct = v => (v == null ? null : v * 100);
+const fmt = (v, d = 2) => (v == null ? "–" : Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
+const ms = arr => (arr && arr.length ? `${fmt(arr[0], 0)} / ${fmt(arr[2], 0)} ms` : "–");
+
+async function get(path) {
+  const response = await fetch(path);
+  if (!response.ok) throw new Error(`${path}: ${response.status}`);
+  return response.json();
+}
+
+function table(el, headers, rows) {
+  el.innerHTML = rows.length
+    ? `<thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody>`
+    : `<tr><td class="empty">No data yet</td></tr>`;
+}
+
+async function loadExpiries() {
+  const expiries = await get("/expiries");
+  const select = document.getElementById("expiry");
+  const current = select.value;
+  select.innerHTML = expiries.map(e => {
+    const d = e.expiry.slice(0, 10);
+    return `<option value="${d}">${d} (${e.instruments})</option>`;
+  }).join("");
+  if (current && [...select.options].some(o => o.value === current)) select.value = current;
+}
+
+async function refreshSmile() {
+  const expiry = document.getElementById("expiry").value;
+  if (!expiry) return;
+  const pts = await get(`/smile?expiry=${expiry}&minutes=10`);
+  const x = pts.map(p => p.strike);
+  const forward = pts.length ? pts[0].forward : null;
+  Plotly.react("smile", [
+    { x, y: pts.map(p => pct(p.iv_mark)), name: "our IV (mark)", mode: "lines+markers", line: { color: color("--accent") } },
+    { x, y: pts.map(p => pct(p.deribit_mark_iv)), name: "Deribit mark IV", mode: "lines", line: { color: color("--accent2"), dash: "dot" } },
+    { x, y: pts.map(p => pct(p.iv_mid)), name: "our IV (bid/ask mid)", mode: "markers", marker: { size: 5, color: color("--muted") } },
+  ], layout({
+    xaxis: { title: "strike (USD)" },
+    shapes: forward ? [{ type: "line", x0: forward, x1: forward, yref: "paper", y0: 0, y1: 1, line: { color: color("--muted"), dash: "dash", width: 1 } }] : [],
+  }), config);
+}
+
+async function refreshTerm() {
+  const pts = await get("/term-structure?minutes=10");
+  Plotly.react("term", [{
+    x: pts.map(p => p.days_to_expiry), y: pts.map(p => pct(p.atm_iv)),
+    text: pts.map(p => p.expiry.slice(0, 10)), mode: "lines+markers", name: "ATM IV",
+    hovertemplate: "%{text}<br>%{y:.2f}%<extra></extra>", line: { color: color("--accent") },
+  }], layout({ xaxis: { title: "days to expiry" } }), config);
+}
+
+async function refreshRealised() {
+  const expiry = document.getElementById("expiry").value;
+  if (!expiry) return;
+  const pts = await get(`/vol/realised-vs-implied?expiry=${expiry}&hours=6&window=60`);
+  const x = pts.map(p => p.minute);
+  Plotly.react("rvi", [
+    { x, y: pts.map(p => pct(p.realised_vol)), name: "realised (60 min)", mode: "lines", line: { color: color("--accent2") } },
+    { x, y: pts.map(p => pct(p.atm_iv)), name: `ATM implied (${expiry})`, mode: "lines", line: { color: color("--accent") } },
+  ], layout({ xaxis: { type: "date" } }), config);
+}
+
+async function refreshTrades() {
+  const trades = await get("/trades/recent?minutes=60&limit=50");
+  table(document.getElementById("trades"),
+    ["time", "instrument", "side", "size", "price", "bid", "ask", "trade IV", "delta", "Δ traded"],
+    trades.map(t => `<tr><td>${t.trade_ts.slice(11, 19)}</td><td>${t.instrument_name}</td>
+      <td class="${t.direction}">${t.direction}</td><td>${fmt(t.amount, 1)}</td><td>${fmt(t.price, 4)}</td>
+      <td>${fmt(t.bid_price, 4)}</td><td>${fmt(t.ask_price, 4)}</td><td>${t.trade_iv == null ? "–" : fmt(t.trade_iv * 100) + "%"}</td>
+      <td>${fmt(t.delta, 3)}</td><td>${fmt(t.delta_traded, 2)}</td></tr>`));
+}
+
+async function refreshFlow() {
+  const rows = await get("/trades/flow?minutes=60");
+  table(document.getElementById("flow"), ["expiry", "", "trades", "bought", "sold", "net delta"],
+    rows.map(r => `<tr><td>${r.expiry.slice(0, 10)}</td><td></td><td>${r.trades}</td><td>${fmt(r.bought, 1)}</td>
+      <td>${fmt(r.sold, 1)}</td><td class="${(r.net_delta || 0) >= 0 ? "buy" : "sell"}">${fmt(r.net_delta, 2)}</td></tr>`));
+}
+
+async function refreshModel() {
+  const rows = await get("/pipeline/model-check?minutes=5");
+  table(document.getElementById("model"), ["moneyness", "", "ticks", "solver fails", "mean |ΔIV|", "p99 |ΔIV|", "mean |Δdelta|"],
+    rows.map(r => `<tr><td>${r.bucket}</td><td></td><td>${r.ticks.toLocaleString()}</td><td>${r.solver_failures}</td>
+      <td>${fmt(r.mean_abs_iv_diff_pts, 3)} pts</td><td>${fmt(r.p99_abs_iv_diff_pts, 3)} pts</td><td>${fmt(r.mean_abs_delta_diff, 4)}</td></tr>`));
+}
+
+async function refreshHeader() {
+  try {
+    const h = await get("/health");
+    document.getElementById("health").className = "dot " + (h.status === "ok" ? "ok" : "bad");
+    document.getElementById("health-text").textContent = h.status === "ok" ? "healthy" : `degraded (ClickHouse ${h.clickhouse ? "up" : "down"}, Postgres ${h.postgres ? "up" : "down"})`;
+  } catch (e) {
+    document.getElementById("health").className = "dot bad";
+    document.getElementById("health-text").textContent = "API unreachable";
+  }
+  const l = await get("/pipeline/latency?minutes=1");
+  document.getElementById("tps").textContent = fmt(l.ticks_per_second, 0);
+  document.getElementById("lat1").textContent = ms(l.exchange_to_ingest_ms);
+  const total = l.ingest_to_process_ms.map((v, i) => v + l.process_to_insert_ms[i]);
+  document.getElementById("lat2").textContent = ms(total);
+  document.getElementById("updated").textContent = new Date().toLocaleTimeString();
+}
+
+const safe = fn => fn().catch(e => console.warn(e));
+async function fast() { await Promise.all([refreshHeader, refreshSmile, refreshTerm, refreshTrades].map(safe)); }
+async function slow() { await Promise.all([refreshRealised, refreshFlow, refreshModel, loadExpiries].map(safe)); }
+
+document.getElementById("expiry").addEventListener("change", () => { safe(refreshSmile); safe(refreshRealised); });
+(async () => {
+  await safe(loadExpiries);
+  await Promise.all([fast(), slow()]);
+  setInterval(fast, 5000);
+  setInterval(slow, 30000);
+})();
+</script>
+</body>
+</html>

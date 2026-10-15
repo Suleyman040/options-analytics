@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "options-analytics"
+version = "0.1.0"
+description = "Real-time options analytics pipeline: implied volatility and Greeks from live market data, built with Kafka, ClickHouse, Postgres and FastAPI."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "clickhouse-connect>=0.8",
+    "confluent-kafka>=2.6",
+    "fastapi>=0.115",
+    "httpx>=0.27",
+    "psycopg[binary,pool]>=3.2",
+    "pydantic-settings>=2.4",
+    "uvicorn[standard]>=0.30",
+    "websockets>=14",
+]
+
+[project.optional-dependencies]
+dev = [
+    # chdb is ClickHouse embedded in Python. The SQL tests use it so CI can
+    # run every ClickHouse query without a server. No Windows build exists,
+    # so on Windows those tests are skipped (run them against Docker instead).
+    "chdb>=3.0; sys_platform != 'win32'",
+    "mypy>=1.11",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+]
+scripts = ["matplotlib>=3.8", "pandas>=2.2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/options_analytics"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = ["integration: needs running services (Postgres or ClickHouse); see README"]
+filterwarnings = ["ignore::DeprecationWarning:websockets.*", "ignore:Using `httpx` with `starlette.testclient`"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # allow σ, φ and other maths symbols in comments
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = false
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["confluent_kafka.*", "clickhouse_connect.*", "chdb.*"]
+ignore_missing_imports = true
+
+[tool.ruff.lint.per-file-ignores]
+"src/options_analytics/queries.py" = ["E501"]  # SQL reads better unwrapped

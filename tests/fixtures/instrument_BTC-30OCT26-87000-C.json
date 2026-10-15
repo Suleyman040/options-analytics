@@ -1,0 +1,13 @@
+{
+  "instrument_name": "BTC-30OCT26-87000-C",
+  "kind": "option",
+  "base_currency": "BTC",
+  "settlement_currency": "BTC",
+  "option_type": "call",
+  "strike": 87000.0,
+  "expiration_timestamp": 1793347200000,
+  "tick_size": 0.0001,
+  "contract_size": 1.0,
+  "min_trade_amount": 0.1,
+  "is_active": true
+}
